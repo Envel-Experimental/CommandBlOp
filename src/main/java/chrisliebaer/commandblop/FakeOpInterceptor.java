@@ -6,6 +6,7 @@ import com.comphenix.protocol.events.PacketAdapter;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
 import lombok.extern.slf4j.Slf4j;
+import lombok.var;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
@@ -49,11 +50,7 @@ public class FakeOpInterceptor extends PacketAdapter {
 		PacketContainer container = new PacketContainer(PacketType.Play.Server.ENTITY_STATUS);
 		container.getIntegers().write(0, player.getEntityId());
 		container.getBytes().write(0, (byte) 28);
-		
-		try {
-			protocolManager.sendServerPacket(player, container);
-		} catch (InvocationTargetException e) {
-			log.error("failed to send fake op to {}", player, e);
-		}
+
+		protocolManager.sendServerPacket(player, container);
 	}
 }

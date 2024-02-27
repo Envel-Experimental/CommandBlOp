@@ -14,6 +14,7 @@ import de.tr7zw.nbtapi.NBTContainer;
 import de.tr7zw.nbtapi.NBTTileEntity;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import lombok.var;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -33,12 +34,20 @@ import org.bukkit.util.Vector;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
+import java.util.HashMap;
+import java.util.Map;
 
 @Slf4j
 public class CommandBlOp extends JavaPlugin implements Listener {
 	
 	private ProtocolManager protocolManager;
 	private FakeOpInterceptor opInterceptor;
+
+	private static final Map<String, String> commandPermissions = new HashMap<>();
+
+	static {
+		commandPermissions.put("tp", "minecraft.command.teleport");
+	}
 	
 	@Override
 	public void onEnable() {
@@ -85,6 +94,29 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		boolean trackOutput = container.getBooleans().read(0);
 		boolean conditional = container.getBooleans().read(1);
 		boolean automatic = container.getBooleans().read(2);
+
+		String[] commandParts = command.split(" ");
+		String baseCommand = commandParts[0].toLowerCase();
+
+		if (baseCommand.startsWith("/")) {
+			baseCommand = baseCommand.substring(1);
+		}
+
+		if (!player.hasPermission("minecraft.command." + command.toLowerCase())) {
+			String associatedPermission = commandPermissions.get(baseCommand);
+			if (!player.hasPermission("minecraft.command." + baseCommand.toLowerCase()) &&
+					(associatedPermission == null || !player.hasPermission(associatedPermission))) {
+				player.sendMessage("У тебя нет прав на использование этой команды в командном блоке.");
+				return;
+			}
+		}
+
+		for (String argument : commandParts) {
+			if (argument.startsWith("@") && !argument.equalsIgnoreCase("@p")) {
+				player.sendMessage("Использование других аргументов с символом @, кроме @p в командном блоке запрещено.");
+				return;
+			}
+		}
 		
 		// cause fuck you, that's why
 		String mode = unfuckSetCommandPacket(container.getHandle());
@@ -213,6 +245,17 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			Directional directional = (Directional) block.getBlockData();
 			directional.setFacing(face.getOppositeFace()); // command blocks are inverted for some reason
 			block.setBlockData(directional);
+
+			if (item != null && item.hasItemMeta()) {
+				CommandBlock commandBlock = (CommandBlock) block.getState();
+				if (commandBlock != null) {
+					String displayName = item.getItemMeta().getDisplayName();
+					if (displayName != null && !displayName.isEmpty()) {
+						commandBlock.setName(displayName);
+						commandBlock.update();
+					}
+				}
+			}
 			
 			return true;
 		}
@@ -231,12 +274,8 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		NBTTileEntity nbtTileEntity = new NBTTileEntity(commandBlock);
 		NbtWrapper<Object> nbt = NbtFactory.fromNMS(nbtTileEntity.getCompound(), "root");
 		container.getNbtModifier().write(0, nbt);
-		
-		try {
-			protocolManager.sendServerPacket(player, container);
-		} catch (InvocationTargetException e) {
-			log.error("failed to send command block data to {}", player, e);
-		}
+
+		protocolManager.sendServerPacket(player, container);
 	}
 	
 	private static BlockFace getBlockFaceFromVector(Vector vec) {
