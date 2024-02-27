@@ -1,6 +1,3 @@
-# WARNING
-Command blocks allow everyone that has access to run commands as the console user. THIS MEANS EVERYTHING! This plugin will not prevent that. **It does not provide improved security over giving every player operator permission!** You have been warned.
-
 # What does this do?
 Current Minecraft does not allow you to use command blocks if you are not an operator on the server. Since this is hardcoded into the Mojang portion of the server, modded servers are unable to override this behavior. The issues is compicated by the fact that the Minecraft client also refuses to even try to interfact with commands blocks since it knows it's current op state.
 
