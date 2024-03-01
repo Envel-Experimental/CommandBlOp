@@ -10,11 +10,20 @@ import com.comphenix.protocol.events.PacketEvent;
 import com.comphenix.protocol.wrappers.BlockPosition;
 import com.comphenix.protocol.wrappers.nbt.NbtFactory;
 import com.comphenix.protocol.wrappers.nbt.NbtWrapper;
+import com.sk89q.worldedit.bukkit.BukkitAdapter;
+import com.sk89q.worldguard.LocalPlayer;
+import com.sk89q.worldguard.WorldGuard;
+import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
+import com.sk89q.worldguard.protection.ApplicableRegionSet;
+import com.sk89q.worldguard.protection.flags.Flags;
+import com.sk89q.worldguard.protection.regions.RegionContainer;
+import com.sk89q.worldguard.protection.regions.RegionQuery;
 import de.tr7zw.nbtapi.NBTContainer;
 import de.tr7zw.nbtapi.NBTTileEntity;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import lombok.var;
+import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -189,6 +198,11 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 				type == Material.REPEATING_COMMAND_BLOCK) {
 			
 			if (ev.getAction() == Action.LEFT_CLICK_BLOCK && player.hasPermission(Permissions.BREAK)) {
+				if (!canPlayerModifyRegion(player, block.getLocation())) {
+					player.sendMessage("Здесь нельзя ставить/ломать командный блок.");
+					ev.setCancelled(true);
+					return;
+				}
 				block.breakNaturally();
 				return;
 			}
@@ -235,7 +249,14 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			Location loc = clicked.getLocation().add(ev.getBlockFace().getDirection());
 			Block block = loc.getBlock();
 			ItemStack item = player.getInventory().getItemInMainHand();
-			
+
+
+			if (!canPlayerModifyRegion(player, block.getLocation())) {
+				player.sendMessage("Здесь нельзя ставить командный блок.");
+				ev.setCancelled(true);
+				return false;
+			}
+
 			// place block via api
 			block.setType(type);
 			
@@ -262,7 +283,20 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		
 		return false;
 	}
-	
+
+	private boolean canPlayerModifyRegion(Player player, Location location) {
+		RegionContainer container = WorldGuard.getInstance().getPlatform().getRegionContainer();
+		RegionQuery query = container.createQuery();
+
+		LocalPlayer localPlayer = WorldGuardPlugin.inst().wrapPlayer(player);
+
+		com.sk89q.worldedit.util.Location worldGuardLocation = BukkitAdapter.adapt(location);
+
+		ApplicableRegionSet set = query.getApplicableRegions(worldGuardLocation);
+		return set.testState(localPlayer, Flags.BUILD);
+	}
+
+
 	private void sendCommandBlockTileData(Player player, CommandBlock commandBlock) {
 		Location loc = commandBlock.getLocation();
 		
