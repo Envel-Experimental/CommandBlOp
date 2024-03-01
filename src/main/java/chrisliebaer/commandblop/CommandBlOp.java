@@ -199,7 +199,7 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			
 			if (ev.getAction() == Action.LEFT_CLICK_BLOCK && player.hasPermission(Permissions.BREAK)) {
 				if (!canPlayerModifyRegion(player, block.getLocation())) {
-					player.sendMessage("Здесь нельзя ставить/ломать командный блок.");
+					player.sendMessage("Здесь нельзя ломать командный блок.");
 					ev.setCancelled(true);
 					return;
 				}
