@@ -262,7 +262,10 @@ public class CommandBlOp extends JavaPlugin implements Listener, CommandExecutor
 			
 			// sneaking allows to place blocks without activating command block, this is vanilla behavior
 			if (!Permissions.has(player, Permissions.VIEW) || player.isSneaking()) {
-				if (handleCommandBlockPlace(ev)) {
+				boolean placed = handleCommandBlockPlace(ev);
+				if (!placed && !Permissions.has(player, Permissions.VIEW)) {
+					// мы выдаём ванильное право minecraft.commandblock, иначе серверный обработчик
+					// (CommandBlock.use) сам открыл бы GUI игроку без права на просмотр
 					ev.setCancelled(true);
 				}
 				return;

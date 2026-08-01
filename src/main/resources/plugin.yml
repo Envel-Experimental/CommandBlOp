@@ -38,3 +38,6 @@ permissions:
   commandblop.place:
     description: "Allows player to place command blocks without op."
     default: true
+  minecraft.commandblock:
+    description: "Vanilla hook: lets the server open the command block GUI and push fresh tile data to the client (Paper check in CommandBlock.use)."
+    default: true
