@@ -3,5 +3,17 @@ main: chrisliebaer.commandblop.CommandBlOp
 version: "1.0"
 description: "Allows using command blocks without having to Op Players."
 author: "Chrisliebär"
-api-version: "1.16"
-depend: ["ProtocolLib", "NBTAPI", "WorldGuard"]
+api-version: "1.20"
+depend: ["ProtocolLib", "NBTAPI"]
+softdepend: ["WorldGuard"]
+
+permissions:
+  commandblop.*:
+    description: "Allows all CommandBlOp permissions."
+    default: false
+    children:
+      commandblop.fakeop: true
+      commandblop.break: true
+      commandblop.view: true
+      commandblop.edit: true
+      commandblop.place: true

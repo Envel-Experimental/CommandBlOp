@@ -20,9 +20,7 @@ import com.sk89q.worldguard.protection.regions.RegionContainer;
 import com.sk89q.worldguard.protection.regions.RegionQuery;
 import de.tr7zw.nbtapi.NBTContainer;
 import de.tr7zw.nbtapi.NBTTileEntity;
-import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import lombok.var;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -35,14 +33,13 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Vector;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -83,13 +80,41 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 	
 	@EventHandler
 	public void onPlayerJoin(PlayerJoinEvent ev) {
-		// ensure player has fake op on join
-		opInterceptor.fakeOp(ev.getPlayer());
+		Player player = ev.getPlayer();
+		
+		// права могут подгружаться асинхронно после входа, а пакет может потеряться,
+		// поэтому отправляем оп-статус несколько раз с задержкой
+		opInterceptor.fakeOp(player);
+		getServer().getScheduler().runTaskLater(this, () -> {
+			if (player.isOnline())
+				opInterceptor.fakeOp(player);
+		}, 40L);
+		getServer().getScheduler().runTaskLater(this, () -> {
+			if (player.isOnline())
+				opInterceptor.fakeOp(player);
+		}, 120L);
 	}
-	
+
+	@EventHandler
+	public void onPlayerCommandPreprocess(PlayerCommandPreprocessEvent event) {
+		Player player = event.getPlayer();
+		if (player.isOp()) {
+			return;
+		}
+		String[] parts = event.getMessage().split(" ");
+		for (String arg : parts) {
+			if (arg.startsWith("@") && !arg.equalsIgnoreCase("@p")) {
+				player.sendMessage("§cИспользование селектора " + arg + " запрещено в чат-командах.");
+				event.setCancelled(true);
+				return;
+			}
+		}
+	}
+
+
 	private void onSetCommandPacket(PacketEvent ev) {
 		var player = ev.getPlayer();
-		if (player.isOp() || !player.hasPermission(Permissions.EDIT))
+		if (player.isOp() || !Permissions.has(player, Permissions.EDIT))
 			return;
 		
 		// cancel event since we are going to handle it ourself
@@ -111,6 +136,21 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			baseCommand = baseCommand.substring(1);
 		}
 
+		for (String part : commandParts) {
+			if (part.equalsIgnoreCase("particle")) {
+				String last = commandParts[commandParts.length - 1];
+				try {
+					int count = Integer.parseInt(last);
+					if (count > 200) {
+						player.sendMessage("§cМаксимальное количество частиц — 200.");
+						return;
+					}
+				} catch (NumberFormatException ignore) {
+				}
+				break;
+			}
+		}
+
 		if (!player.hasPermission("minecraft.command." + command.toLowerCase())) {
 			String associatedPermission = commandPermissions.get(baseCommand);
 			if (!player.hasPermission("minecraft.command." + baseCommand.toLowerCase()) &&
@@ -128,7 +168,7 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		}
 		
 		// cause fuck you, that's why
-		String mode = unfuckSetCommandPacket(container.getHandle());
+		String mode = CommandBlockMode.fromPacketHandle(container.getHandle());
 		//log.info("updating cmdblock at {}, command: {}, mode: {}, track: {}, conditional: {}, automatic: {}",
 				//loc, command, mode, trackOutput, conditional, automatic);
 		
@@ -149,7 +189,7 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			BlockFace facing = ((Directional) block.getBlockData()).getFacing();
 			
 			// update block according to new type
-			block.setType(resolveCommandBlockType(mode));
+			block.setType(CommandBlockMode.toMaterial(mode));
 			
 			// copy over nbt data (the same accros all command block types)
 			var nbt = new NBTTileEntity(block.getState());
@@ -172,19 +212,6 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		});
 	}
 	
-	private Material resolveCommandBlockType(String mode) {
-		switch (mode) {
-			case "REDSTONE":
-				return Material.COMMAND_BLOCK;
-			case "SEQUENCE":
-				return Material.CHAIN_COMMAND_BLOCK;
-			case "AUTO":
-				return Material.REPEATING_COMMAND_BLOCK;
-			default:
-				throw new RuntimeException("unknown command block type: " + mode);
-		}
-	}
-	
 	@EventHandler
 	public void onPlayerInteract(PlayerInteractEvent ev) {
 		var player = ev.getPlayer();
@@ -197,7 +224,7 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 				type == Material.CHAIN_COMMAND_BLOCK ||
 				type == Material.REPEATING_COMMAND_BLOCK) {
 			
-			if (ev.getAction() == Action.LEFT_CLICK_BLOCK && player.hasPermission(Permissions.BREAK)) {
+			if (ev.getAction() == Action.LEFT_CLICK_BLOCK && Permissions.has(player, Permissions.BREAK)) {
 				if (!canPlayerModifyRegion(player, block.getLocation())) {
 					player.sendMessage("Здесь нельзя ломать командный блок.");
 					ev.setCancelled(true);
@@ -208,7 +235,7 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			}
 			
 			// sneaking allows to place blocks without activating command block, this is vanilla behavior
-			if (!player.hasPermission(Permissions.VIEW) || player.isSneaking()) {
+			if (!Permissions.has(player, Permissions.VIEW) || player.isSneaking()) {
 				if (handleCommandBlockPlace(ev)) {
 					ev.setCancelled(true);
 				}
@@ -238,7 +265,7 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		if (type == Material.COMMAND_BLOCK ||
 				type == Material.CHAIN_COMMAND_BLOCK ||
 				type == Material.REPEATING_COMMAND_BLOCK) {
-			if (!player.hasPermission(Permissions.PLACE) || ev.getAction() == Action.LEFT_CLICK_BLOCK)
+			if (!Permissions.has(player, Permissions.PLACE) || ev.getAction() == Action.LEFT_CLICK_BLOCK)
 				return false;
 			
 			// resolve clicked block to point of creation
@@ -285,6 +312,10 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 	}
 
 	private boolean canPlayerModifyRegion(Player player, Location location) {
+		// WorldGuard опционален: без него защита регионов не применяется
+		if (Bukkit.getPluginManager().getPlugin("WorldGuard") == null)
+			return true;
+		
 		RegionContainer container = WorldGuard.getInstance().getPlatform().getRegionContainer();
 		RegionQuery query = container.createQuery();
 
@@ -338,19 +369,5 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 	
 	private static BlockFace decideFacingFromValue(double val, BlockFace positive, BlockFace negative) {
 		return val > 0 ? positive : negative;
-	}
-	
-	@SneakyThrows
-	private static String unfuckSetCommandPacket(Object handle) {
-		Class<?> clazz = handle.getClass();
-		
-		for (Field field : clazz.getDeclaredFields()) {
-			if (field.getType().getName().endsWith("TileEntityCommand$Type")) {
-				field.setAccessible(true);
-				Object o = field.get(handle); // this is an enum. i hope
-				return o.toString();
-			}
-		}
-		throw new RuntimeException("failed to located command block type, this likely means your version is incompatible");
 	}
 }

@@ -6,7 +6,8 @@ This plugin uses [ProtocolLib](https://github.com/aadnk/ProtocolLib) to send an 
 # Requirements
 * [ProtocolLib](https://www.spigotmc.org/resources/protocollib.1997/) for packet interception
 * [NBT API](https://www.spigotmc.org/resources/nbt-api.7939/) for accessing command block nbt data
-* Right now, this plugin has only been tested with Minecraft 1.16
+* [WorldGuard](https://dev.bukkit.org/projects/worldguard) is optional, only used for region protection on breaking/placing command blocks
+* Right now, this plugin has only been tested with Minecraft 1.20.1
 
 # Why would you need that?
 Bukkit and forks will give certain permissions to every player with operator status. While this might seem like a good idea. It's horrible. You can't control which permissions a player gets. They get all default permissions. These include bypasses or commands you really don't want on your server. Even worse: If often includes bypass permissions that you don't even know are absence from your regular permission system since you always have them. This creates hard to debug permission problems.
@@ -14,6 +15,7 @@ Bukkit and forks will give certain permissions to every player with operator sta
 # Permissions
 Keep in mind that you have to be in creative mode in order to interact with command blocks. This is a Minecraft limitation. Likewise any real operator on the server is not impacted by this plugin or it's permissions at all.
 
+* `commandblop.*` - Grants all permissions below.
 * `commandblop.fakeop` - Send fake op level to client. Requires reconnect. Must be set for all other permissions!
 * `commandblop.break` - Allows player to break command blocks without op.
 * `commandblop.view` - Allows player to view command set in command block without op.
