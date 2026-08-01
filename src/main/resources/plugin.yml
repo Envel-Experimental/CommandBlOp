@@ -7,13 +7,34 @@ api-version: "1.20"
 depend: ["ProtocolLib", "NBTAPI"]
 softdepend: ["WorldGuard"]
 
+commands:
+  commandblop:
+    description: "Переотправляет фейковый оп-статус клиенту (если командные блоки перестали работать)."
+    usage: "/commandblop"
+    permission: commandblop.fakeop
+
 permissions:
   commandblop.*:
     description: "Allows all CommandBlOp permissions."
-    default: false
+    default: true
     children:
       commandblop.fakeop: true
       commandblop.break: true
       commandblop.view: true
       commandblop.edit: true
       commandblop.place: true
+  commandblop.fakeop:
+    description: "Send fake op level to client."
+    default: true
+  commandblop.break:
+    description: "Allows player to break command blocks without op."
+    default: true
+  commandblop.view:
+    description: "Allows player to view command set in command block without op."
+    default: true
+  commandblop.edit:
+    description: "Allows player to edit command block without op."
+    default: true
+  commandblop.place:
+    description: "Allows player to place command blocks without op."
+    default: true

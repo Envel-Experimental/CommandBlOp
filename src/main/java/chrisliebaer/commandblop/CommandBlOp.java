@@ -7,9 +7,6 @@ import com.comphenix.protocol.events.ListenerPriority;
 import com.comphenix.protocol.events.PacketAdapter;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
-import com.comphenix.protocol.wrappers.BlockPosition;
-import com.comphenix.protocol.wrappers.nbt.NbtFactory;
-import com.comphenix.protocol.wrappers.nbt.NbtWrapper;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
 import com.sk89q.worldguard.LocalPlayer;
 import com.sk89q.worldguard.WorldGuard;
@@ -18,7 +15,6 @@ import com.sk89q.worldguard.protection.ApplicableRegionSet;
 import com.sk89q.worldguard.protection.flags.Flags;
 import com.sk89q.worldguard.protection.regions.RegionContainer;
 import com.sk89q.worldguard.protection.regions.RegionQuery;
-import de.tr7zw.nbtapi.NBTContainer;
 import de.tr7zw.nbtapi.NBTTileEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.bukkit.Bukkit;
@@ -29,6 +25,9 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.CommandBlock;
 import org.bukkit.block.data.Directional;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -40,11 +39,12 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Vector;
 
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j
-public class CommandBlOp extends JavaPlugin implements Listener {
+public class CommandBlOp extends JavaPlugin implements Listener, CommandExecutor {
 	
 	private ProtocolManager protocolManager;
 	private FakeOpInterceptor opInterceptor;
@@ -71,6 +71,27 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 				onSetCommandPacket(event);
 			}
 		});
+		
+		// клиент может сбросить оп-статус в любой момент (respawn, смена измерения и т.п.),
+		// поэтому периодически переотправляем фейк-оп всем, у кого есть право
+		getServer().getScheduler().runTaskTimer(this, () -> {
+			for (Player player : getServer().getOnlinePlayers()) {
+				opInterceptor.fakeOp(player);
+			}
+		}, 2400L, 2400L); // каждые 2 минуты
+	}
+	
+	@Override
+	public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+		if (!(sender instanceof Player)) {
+			sender.sendMessage("§cКоманда доступна только игрокам.");
+			return true;
+		}
+		
+		// мгновенно переотправляет фейк-оп клиенту, если тот его потерял (полезно после входа/смены измерения)
+		opInterceptor.fakeOp((Player) sender);
+		sender.sendMessage("§aСтатус оператора отправлен. Если командные блоки всё ещё недоступны — проверь права commandblop.fakeop и commandblop.*");
+		return true;
 	}
 	
 	private boolean ignore(PacketEvent event) {
@@ -85,14 +106,12 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		// права могут подгружаться асинхронно после входа, а пакет может потеряться,
 		// поэтому отправляем оп-статус несколько раз с задержкой
 		opInterceptor.fakeOp(player);
-		getServer().getScheduler().runTaskLater(this, () -> {
-			if (player.isOnline())
-				opInterceptor.fakeOp(player);
-		}, 40L);
-		getServer().getScheduler().runTaskLater(this, () -> {
-			if (player.isOnline())
-				opInterceptor.fakeOp(player);
-		}, 120L);
+		for (long delay : new long[]{20L, 60L, 120L, 240L}) {
+			getServer().getScheduler().runTaskLater(this, () -> {
+				if (player.isOnline())
+					opInterceptor.fakeOp(player);
+			}, delay);
+		}
 	}
 
 	@EventHandler
@@ -121,7 +140,6 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		ev.setCancelled(true);
 		
 		var container = ev.getPacket();
-		BlockPosition huh = container.getBlockPositionModifier().read(0);
 		
 		Location loc = container.getBlockPositionModifier().read(0).toLocation(player.getWorld());
 		String command = container.getStrings().read(0);
@@ -151,12 +169,16 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			}
 		}
 
-		if (!player.hasPermission("minecraft.command." + command.toLowerCase())) {
-			String associatedPermission = commandPermissions.get(baseCommand);
-			if (!player.hasPermission("minecraft.command." + baseCommand.toLowerCase()) &&
-					(associatedPermission == null || !player.hasPermission(associatedPermission))) {
-				player.sendMessage("У тебя нет прав на использование этой команды в командном блоке.");
-				return;
+		// опциональная проверка: не-опы не имеют прав minecraft.command.* (ванила выдаёт их только операторам),
+		// поэтому по умолчанию выключена; включить: restrict-commands: true в config.yml
+		if (getConfig().getBoolean("restrict-commands", false)) {
+			if (!player.hasPermission("minecraft.command." + command.toLowerCase())) {
+				String associatedPermission = commandPermissions.get(baseCommand);
+				if (!player.hasPermission("minecraft.command." + baseCommand.toLowerCase()) &&
+						(associatedPermission == null || !player.hasPermission(associatedPermission))) {
+					player.sendMessage("У тебя нет прав на использование этой команды в командном блоке.");
+					return;
+				}
 			}
 		}
 
@@ -181,23 +203,21 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 				return;
 			}
 			
-			block.getState();
-			block.getBlockData();
-			
-			// copy current nbt tag and restore after block update
-			String nbtData = new NBTTileEntity(block.getState()).asNBTString();
+			// сохраняем имя блока (пакет его не содержит) и направление
+			String customName = ((CommandBlock) block.getState()).getName();
 			BlockFace facing = ((Directional) block.getBlockData()).getFacing();
 			
 			// update block according to new type
 			block.setType(CommandBlockMode.toMaterial(mode));
 			
-			// copy over nbt data (the same accros all command block types)
-			var nbt = new NBTTileEntity(block.getState());
-			nbt.getKeys().forEach(nbt::removeKey);
-			nbt.mergeCompound(new NBTContainer(nbtData));
+			// команду и имя применяем через Bukkit API
+			CommandBlock state = (CommandBlock) block.getState();
+			state.setCommand(command);
+			state.setName(customName);
+			state.update();
 			
-			// update with new data
-			nbt.setString("Command", command);
+			// TrackOutput и auto не имеют Bukkit API — пишем через NBT
+			var nbt = new NBTTileEntity(block.getState());
 			nbt.setByte("TrackOutput", (byte) (trackOutput ? 1 : 0));
 			nbt.setByte("auto", (byte) (automatic ? 1 : 0));
 			
@@ -209,6 +229,12 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 			commandBlockData.setConditional(conditional);
 			directionalData.setFacing(facing);
 			block.setBlockData(blockData);
+				
+			// клиент открывает GUI командного блока сам (по предсказанию хода, т.к. у него fake-op),
+			// читая свою локальную копию блок-сущности. CraftBlockState.update() не шлёт пакет
+			// TILE_ENTITY_DATA, поэтому без рассылки клиент остаётся со старой (пустой) командой,
+			// и при повторном открытии GUI команда не видна, хотя на сервере она сохранена.
+			broadcastCommandBlockTileData(block);
 		});
 	}
 	
@@ -265,8 +291,14 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		if (type == Material.COMMAND_BLOCK ||
 				type == Material.CHAIN_COMMAND_BLOCK ||
 				type == Material.REPEATING_COMMAND_BLOCK) {
-			if (!Permissions.has(player, Permissions.PLACE) || ev.getAction() == Action.LEFT_CLICK_BLOCK)
+			if (ev.getAction() == Action.LEFT_CLICK_BLOCK)
 				return false;
+			
+			if (!Permissions.has(player, Permissions.PLACE)) {
+				player.sendMessage("§cУ тебя нет прав на установку командных блоков (commandblop.place или commandblop.*).");
+				ev.setCancelled(true);
+				return false;
+			}
 			
 			// resolve clicked block to point of creation
 			Block clicked = ev.getClickedBlock();
@@ -316,31 +348,58 @@ public class CommandBlOp extends JavaPlugin implements Listener {
 		if (Bukkit.getPluginManager().getPlugin("WorldGuard") == null)
 			return true;
 		
-		RegionContainer container = WorldGuard.getInstance().getPlatform().getRegionContainer();
-		RegionQuery query = container.createQuery();
+		try {
+			RegionContainer container = WorldGuard.getInstance().getPlatform().getRegionContainer();
+			RegionQuery query = container.createQuery();
 
-		LocalPlayer localPlayer = WorldGuardPlugin.inst().wrapPlayer(player);
+			LocalPlayer localPlayer = WorldGuardPlugin.inst().wrapPlayer(player);
 
-		com.sk89q.worldedit.util.Location worldGuardLocation = BukkitAdapter.adapt(location);
+			com.sk89q.worldedit.util.Location worldGuardLocation = BukkitAdapter.adapt(location);
 
-		ApplicableRegionSet set = query.getApplicableRegions(worldGuardLocation);
-		return set.testState(localPlayer, Flags.BUILD);
+			ApplicableRegionSet set = query.getApplicableRegions(worldGuardLocation);
+			return set.testState(localPlayer, Flags.BUILD);
+		} catch (Throwable t) {
+			// несовместимая версия WorldGuard не должна молча ломать установку/ломку блоков
+			log.warn("WorldGuard integration failed, allowing modification: {}", t.toString());
+			return true;
+		}
 	}
 
 
 	private void sendCommandBlockTileData(Player player, CommandBlock commandBlock) {
-		Location loc = commandBlock.getLocation();
+		// CraftBlockEntityState.getUpdatePacket(Location) сам строит пакет TILE_ENTITY_DATA:
+		// с правильным типом блок-сущности и полным NBT (имя, LastOutput и т.п.).
+		// Сигнатура проверена по исходникам ядра: CraftBlockEntityState#getUpdatePacket(Location)
+		try {
+			Object state = commandBlock;
+			Method updatePacket = state.getClass().getMethod("getUpdatePacket", Location.class);
+			Object packetHandle = updatePacket.invoke(state, commandBlock.getLocation());
+			if (packetHandle != null)
+				protocolManager.sendServerPacket(player, new PacketContainer(PacketType.Play.Server.TILE_ENTITY_DATA, packetHandle));
+		} catch (ReflectiveOperationException e) {
+			// падение здесь не должно ронять обработчик события ("Could not pass event")
+			log.error("failed to send command block data to {} at {}", player, commandBlock.getLocation(), e);
+		}
+	}
+	
+	/**
+	 * Рассылает свежие данные блок-сущности всем игрокам в радиусе прогрузки, чтобы их
+	 * локальные копии соответствовали серверным. Без этого клиент открывает GUI командного
+	 * блока с устаревшими данными (пустой командой).
+	 */
+	private void broadcastCommandBlockTileData(Block block) {
+		if (!(block.getState() instanceof CommandBlock state))
+			return;
 		
-		// https://wiki.vg/Protocol#Update_Block_Entity
-		PacketContainer container = protocolManager.createPacket(PacketType.Play.Server.TILE_ENTITY_DATA);
-		container.getBlockPositionModifier().write(0, new BlockPosition(loc.toVector()));
-		container.getIntegers().write(0, 2); // this data contains command block text
-		
-		NBTTileEntity nbtTileEntity = new NBTTileEntity(commandBlock);
-		NbtWrapper<Object> nbt = NbtFactory.fromNMS(nbtTileEntity.getCompound(), "root");
-		container.getNbtModifier().write(0, nbt);
-
-		protocolManager.sendServerPacket(player, container);
+		int blockDist = Bukkit.getViewDistance() * 16;
+		double rangeSq = (double) blockDist * blockDist;
+		Location loc = block.getLocation();
+		for (Player player : Bukkit.getOnlinePlayers()) {
+			if (player.getWorld().equals(block.getWorld())
+					&& player.getLocation().distanceSquared(loc) <= rangeSq) {
+				sendCommandBlockTileData(player, state);
+			}
+		}
 	}
 	
 	private static BlockFace getBlockFaceFromVector(Vector vec) {
